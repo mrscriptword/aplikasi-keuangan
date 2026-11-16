@@ -45,4 +45,14 @@ void main() {
         throwsArgumentError);
     expect(await ledger.read(), isEmpty);
   });
+
+  test('Creates custom categories and prevents duplicates', () async {
+    expect(await ledger.addCategory('Pendidikan', false), 'Pendidikan');
+    expect(await ledger.categories(false), contains('Pendidikan'));
+    await expectLater(ledger.addCategory(' pendidikan ', false),
+        throwsArgumentError);
+    await ledger.save(Entry(amount: 100000, income: false,
+        date: DateTime.now(), category: 'Pendidikan', note: 'Buku'));
+    expect((await ledger.read()).single.category, 'Pendidikan');
+  });
 }

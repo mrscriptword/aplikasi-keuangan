@@ -8,6 +8,7 @@ Data awal kosong; transaksi disimpan dalam SQLite di perangkat.
 - Beranda: ringkasan bulan berjalan dan transaksi per hari.
 - Catatan: pilihan bulan, filter pemasukan/pengeluaran, riwayat per tanggal.
 - Tambah, edit (ketuk transaksi), dan hapus catatan.
+- Membuat kategori pemasukan atau pengeluaran baru secara offline.
 - Rekap: grafik tujuh hari dan pengeluaran per kategori.
 - Profil: informasi penyimpanan lokal. Halaman ini tambahan karena desain
   sumber hanya menyediakan empat layar.

@@ -334,7 +334,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     final maxValue = values.expand((v) => v).fold<int>(1, math.max);
     final expense = total(current, false);
     final categories = {
-      for (final c in expenseCategories)
+      for (final c in current.where((e) => !e.income).map((e) => e.category).toSet())
         c: total(current.where((e) => e.category == c), false),
     }.entries.where((e) => e.value > 0).toList()
       ..sort((a, b) => b.value.compareTo(a.value));
@@ -531,6 +531,9 @@ class _EntryFormState extends State<EntryForm> {
   late DateTime date;
   late String category;
   bool busy = false;
+  bool categoriesReady = false;
+  List<String> incomes = List.of(incomeCategories);
+  List<String> expenses = List.of(expenseCategories);
 
   @override
   void initState() {
@@ -541,6 +544,38 @@ class _EntryFormState extends State<EntryForm> {
     income = e?.income ?? true;
     date = e?.date ?? DateTime.now();
     category = e?.category ?? incomeCategories.first;
+    loadCategories();
+  }
+
+  Future<void> loadCategories() async {
+    try {
+      final incoming = await widget.ledger.categories(true);
+      final outgoing = await widget.ledger.categories(false);
+      if (!mounted) return;
+      setState(() {
+        incomes = incoming;
+        expenses = outgoing;
+        categoriesReady = true;
+      });
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Kategori belum dapat dimuat. Coba lagi.')));
+      }
+    }
+  }
+
+  Future<void> addCategory() async {
+    final name = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => CategoryDialog(ledger: widget.ledger, income: income),
+    );
+    if (name == null || !mounted) return;
+    setState(() {
+      (income ? incomes : expenses).add(name);
+      category = name;
+    });
   }
 
   @override
@@ -565,7 +600,7 @@ class _EntryFormState extends State<EntryForm> {
   }
 
   Future<void> save() async {
-    if (busy || !form.currentState!.validate()) return;
+    if (busy || !categoriesReady || !form.currentState!.validate()) return;
     setState(() => busy = true);
     try {
       await widget.ledger.save(Entry(
@@ -652,7 +687,7 @@ class _EntryFormState extends State<EntryForm> {
                 showSelectedIcon: false,
                 onSelectionChanged: busy ? null : (selection) => setState(() {
                   income = selection.first;
-                  category = (income ? incomeCategories : expenseCategories).first;
+                  category = (income ? incomes : expenses).first;
                 }),
               ),
               label('Jumlah'),
@@ -685,11 +720,19 @@ class _EntryFormState extends State<EntryForm> {
               Text(dateLabel(date, 'EEEE, d MMMM yyyy'),
                   style: const TextStyle(color: muted, fontSize: 12)),
               label('Kategori'),
+              if (!categoriesReady)
+                TextButton(onPressed: loadCategories,
+                    child: const Text('Muat kategori')),
               Wrap(spacing: 8, runSpacing: 8, children: [
-                for (final c in income ? incomeCategories : expenseCategories)
+                for (final c in income ? incomes : expenses)
                   ChoiceChip(label: Text(c), selected: category == c,
                       showCheckmark: false,
                       onSelected: busy ? null : (_) => setState(() => category = c)),
+                ActionChip(
+                  avatar: const Icon(Icons.add, size: 18),
+                  label: const Text('Kategori baru'),
+                  onPressed: busy || !categoriesReady ? null : addCategory,
+                ),
               ]),
               label('Catatan'),
               TextFormField(
@@ -700,7 +743,7 @@ class _EntryFormState extends State<EntryForm> {
                     hintText: 'Contoh: Jasa desain (opsional)'),
               ),
               const SizedBox(height: 24),
-              FilledButton(onPressed: busy ? null : save,
+              FilledButton(onPressed: busy || !categoriesReady ? null : save,
                   child: Text(busy ? 'Memproses…' : 'Simpan catatan')),
             ],
           )),
@@ -708,4 +751,73 @@ class _EntryFormState extends State<EntryForm> {
       ),
     );
   }
+}
+
+class CategoryDialog extends StatefulWidget {
+  const CategoryDialog({super.key, required this.ledger, required this.income});
+  final Ledger ledger;
+  final bool income;
+
+  @override
+  State<CategoryDialog> createState() => _CategoryDialogState();
+}
+
+class _CategoryDialogState extends State<CategoryDialog> {
+  final controller = TextEditingController();
+  bool saving = false;
+  String? error;
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> save() async {
+    if (saving) return;
+    setState(() { saving = true; error = null; });
+    try {
+      final name = await widget.ledger.addCategory(controller.text, widget.income);
+      if (mounted) Navigator.pop(context, name);
+    } catch (exception) {
+      if (mounted) {
+        setState(() {
+          saving = false;
+          error = exception is ArgumentError
+              ? exception.message.toString() : 'Gagal menyimpan kategori. Coba lagi.';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => PopScope(
+    canPop: !saving,
+    child: AlertDialog(
+      title: const Text('Kategori baru'),
+      content: Column(mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(widget.income ? 'Untuk pemasukan' : 'Untuk pengeluaran',
+              style: const TextStyle(color: muted)),
+          const SizedBox(height: 16),
+          TextField(
+            controller: controller,
+            enabled: !saving,
+            autofocus: true,
+            maxLength: 40,
+            textCapitalization: TextCapitalization.words,
+            decoration: InputDecoration(
+                labelText: 'Nama kategori', hintText: 'Contoh: Pendidikan',
+                errorText: error, errorMaxLines: 3),
+            onSubmitted: (_) => save(),
+          ),
+        ]),
+      actions: [
+        TextButton(onPressed: saving ? null : () => Navigator.pop(context),
+            child: const Text('Batal')),
+        FilledButton(onPressed: saving ? null : save,
+            child: Text(saving ? 'Menyimpan…' : 'Tambah')),
+      ],
+    ),
+  );
 }

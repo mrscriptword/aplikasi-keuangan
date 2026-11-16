@@ -63,7 +63,7 @@ class Ledger {
     if (_database != null) return _database!;
     final location = databasePath ??
         p.join(await getDatabasesPath(), 'catatan_keuangan.db');
-    _database = await openDatabase(location, version: 1,
+    _database = await openDatabase(location, version: 2,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE entries (
@@ -76,9 +76,57 @@ class Ledger {
           )
         ''');
         await db.execute('CREATE INDEX entries_date ON entries(date)');
+        await _createCategories(db);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) await _createCategories(db);
       },
     );
     return _database!;
+  }
+
+  Future<void> _createCategories(Database db) async {
+    await db.execute('''
+      CREATE TABLE categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        name_key TEXT NOT NULL,
+        income INTEGER NOT NULL CHECK(income IN (0, 1)),
+        UNIQUE(name_key, income)
+      )
+    ''');
+    for (final income in [true, false]) {
+      for (final name in income ? incomeCategories : expenseCategories) {
+        await db.insert('categories', {
+          'name': name, 'name_key': name.toLowerCase(), 'income': income ? 1 : 0,
+        });
+      }
+    }
+  }
+
+  Future<List<String>> categories(bool income) async {
+    final rows = await (await database).query('categories',
+        where: 'income = ?', whereArgs: [income ? 1 : 0], orderBy: 'id ASC');
+    return rows.map((row) => row['name'] as String).toList();
+  }
+
+  Future<String> addCategory(String value, bool income) async {
+    final name = value.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (name.isEmpty || name.length > 40) {
+      throw ArgumentError('Nama kategori harus berisi 1–40 karakter.');
+    }
+    final db = await database;
+    try {
+      await db.insert('categories', {
+        'name': name, 'name_key': name.toLowerCase(), 'income': income ? 1 : 0,
+      });
+    } on DatabaseException catch (error) {
+      if (error.isUniqueConstraintError()) {
+        throw ArgumentError('Kategori tersebut sudah ada.');
+      }
+      rethrow;
+    }
+    return name;
   }
 
   Future<List<Entry>> read() async => (await (await database)
@@ -89,8 +137,8 @@ class Ledger {
     if (entry.amount <= 0 || entry.amount > 999999999999) {
       throw ArgumentError('Jumlah tidak valid.');
     }
-    final categories = entry.income ? incomeCategories : expenseCategories;
-    if (!categories.contains(entry.category)) {
+    final available = await categories(entry.income);
+    if (!available.contains(entry.category)) {
       throw ArgumentError('Kategori tidak valid.');
     }
     final db = await database;
