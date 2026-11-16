@@ -1,11 +1,15 @@
 import 'dart:math' as math;
 
+import 'package:crypto/crypto.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/intl.dart';
 
 import 'data.dart';
+import 'import_report.dart';
 
 const green = Color(0xFF0F6B4F);
 const background = Color(0xFFF6F7F4);
@@ -79,6 +83,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   bool failed = false;
   int tab = 0;
   int filter = 0;
+  bool importing = false;
   DateTime day = DateUtils.dateOnly(DateTime.now());
   DateTime month = DateTime(DateTime.now().year, DateTime.now().month);
 
@@ -120,6 +125,73 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       MaterialPageRoute(builder: (_) => EntryForm(ledger: ledger, entry: entry)),
     );
     if (changed == true) await load();
+  }
+
+  Future<void> importFile() async {
+    if (importing) return;
+    setState(() => importing = true);
+    try {
+      final selection = await FilePicker.platform.pickFiles(
+          type: FileType.any, withData: true);
+      if (selection == null) return;
+      final file = selection.files.single;
+      if (file.size > 10 * 1024 * 1024 || file.bytes == null) {
+        throw const FormatException('File tidak dapat dibaca atau melebihi 10 MB.');
+      }
+      final bytes = file.bytes!;
+      final parsed = await compute(parseReport, bytes);
+      final digest = sha256.convert(bytes).toString();
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(context: context, builder: (context) =>
+        AlertDialog(
+          title: const Text('Impor laporan'),
+          content: SingleChildScrollView(child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(file.name),
+              const SizedBox(height: 16),
+              Text('${parsed.length} transaksi'),
+              Text('Pemasukan: ${rupiah(total(parsed, true))}'),
+              Text('Pengeluaran: ${rupiah(total(parsed, false))}'),
+              const SizedBox(height: 12),
+              const Text('Kategori yang belum ada akan dibuat otomatis. '
+                  'Transaksi ditambahkan ke data yang sudah ada. '
+                  'File identik tidak dapat diimpor dua kali. '
+                  'Laporan berbeda dengan periode tumpang tindih dapat menghasilkan duplikat.'),
+            ],
+          )),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false),
+                child: const Text('Batal')),
+            FilledButton(onPressed: () => Navigator.pop(context, true),
+                child: const Text('Impor')),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      await ledger.importEntries(parsed, digest);
+      await load();
+      if (!mounted) return;
+      setState(() {
+        final newest = parsed.map((e) => e.date).reduce((a, b) => a.isAfter(b) ? a : b);
+        month = DateTime(newest.year, newest.month);
+        tab = 1;
+        filter = 0;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${parsed.length} transaksi berhasil diimpor.')));
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(error is FormatException ? error.message.toString() :
+              'Impor gagal. Gunakan laporan XLS atau CSV UTF-8 sesuai format contoh.'),
+          duration: const Duration(seconds: 7),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => importing = false);
+    }
   }
 
   Widget heading(String subtitle, String title) => Padding(
@@ -412,6 +484,20 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
 
   Widget profile() => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
     heading('Ruang pribadi', 'Profil'),
+    panel(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const Text('Impor laporan keuangan',
+          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+      const SizedBox(height: 8),
+      const Text('Pilih laporan XLS atau CSV dari penyimpanan HP.',
+          style: TextStyle(color: muted)),
+      const SizedBox(height: 12),
+      FilledButton.icon(
+        onPressed: importing ? null : importFile,
+        icon: const Icon(Icons.file_upload_outlined),
+        label: Text(importing ? 'Memproses…' : 'Pilih file laporan'),
+      ),
+    ])),
+    const SizedBox(height: 16),
     panel(child: const Column(children: [
       CircleAvatar(radius: 34, backgroundColor: pale,
           child: Icon(Icons.person_outline, color: green, size: 36)),

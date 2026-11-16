@@ -9,6 +9,7 @@ Data awal kosong; transaksi disimpan dalam SQLite di perangkat.
 - Catatan: pilihan bulan, filter pemasukan/pengeluaran, riwayat per tanggal.
 - Tambah, edit (ketuk transaksi), dan hapus catatan.
 - Membuat kategori pemasukan atau pengeluaran baru secara offline.
+- Impor laporan XLS/CSV melalui **Profil → Pilih file laporan**.
 - Rekap: grafik tujuh hari dan pengeluaran per kategori.
 - Profil: informasi penyimpanan lokal. Halaman ini tambahan karena desain
   sumber hanya menyediakan empat layar.
@@ -78,6 +79,28 @@ flutter run
 Folder `.runner` hanya template sementara dan dapat dihapus setelah runner disalin.
 
 ## Struktur
+
+## Impor laporan
+
+Di **Profil**, pilih **Pilih file laporan**, pilih file dari HP, periksa ringkasan,
+lalu tekan **Impor**. Mendukung XLS Excel 97–2003 (termasuk yang berekstensi `.csv`)
+dan CSV UTF-8 dengan pemisah koma, titik koma, atau tab; bukan XLSX.
+Ukuran maksimum 10 MB.
+
+Kolom wajib: `Tanggal`, `Keterangan`, `Pengeluaran`, `Pemasukan`, `Kategori`.
+Tanggal menggunakan `DD/MM/YYYY`; nominal contoh `Rp8.500` atau `8500`.
+Isi salah satu kolom pemasukan/pengeluaran per transaksi. Ringkasan sebelum
+header dan footer laporan contoh diabaikan. Baris transaksi tidak valid
+membatalkan seluruh impor dan menampilkan pesan kesalahan.
+
+Kategori dibuat otomatis. Penyimpanan dilakukan dalam satu transaksi database,
+tanpa menghapus catatan yang sudah ada. File dengan isi byte identik ditolak
+jika pernah diimpor, meskipun namanya diganti. Laporan berbeda yang periodenya
+tumpang tindih masih dapat menghasilkan transaksi duplikat.
+
+Fixture tes memakai data sintetis, bukan laporan keuangan pribadi.
+
+## File implementasi
 
 - `lib/main.dart`: tema, navigasi, layar dan formulir.
 - `lib/data.dart`: model, agregasi rupiah integer, dan database SQLite.

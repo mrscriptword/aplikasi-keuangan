@@ -63,7 +63,7 @@ class Ledger {
     if (_database != null) return _database!;
     final location = databasePath ??
         p.join(await getDatabasesPath(), 'catatan_keuangan.db');
-    _database = await openDatabase(location, version: 2,
+    _database = await openDatabase(location, version: 3,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE entries (
@@ -77,12 +77,47 @@ class Ledger {
         ''');
         await db.execute('CREATE INDEX entries_date ON entries(date)');
         await _createCategories(db);
+        await _createImports(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await _createCategories(db);
+        if (oldVersion < 3) await _createImports(db);
       },
     );
     return _database!;
+  }
+
+  Future<void> _createImports(Database db) => db.execute(
+      'CREATE TABLE imports (digest TEXT PRIMARY KEY, imported_at TEXT NOT NULL)');
+
+  /// One atomic write: categories, entries and the file receipt all succeed together.
+  Future<void> importEntries(List<Entry> entries, String digest) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      if ((await txn.query('imports', where: 'digest = ?', whereArgs: [digest]))
+          .isNotEmpty) {
+        throw const FormatException('File ini sudah pernah diimpor.');
+      }
+      for (final entry in entries) {
+        if (entry.amount <= 0 || entry.amount > 999999999999 ||
+            entry.category.isEmpty || entry.category.length > 40) {
+          throw const FormatException('Transaksi impor tidak valid.');
+        }
+        final type = entry.income ? 1 : 0;
+        final key = entry.category.toLowerCase();
+        await txn.insert('categories', {
+          'name': entry.category, 'name_key': key, 'income': type,
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        final category = (await txn.query('categories',
+            where: 'name_key = ? AND income = ?', whereArgs: [key, type])).single;
+        final values = entry.toMap()..remove('id');
+        values['category'] = category['name'];
+        await txn.insert('entries', values);
+      }
+      await txn.insert('imports', {
+        'digest': digest, 'imported_at': DateTime.now().toIso8601String(),
+      });
+    });
   }
 
   Future<void> _createCategories(Database db) async {
